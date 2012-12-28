@@ -53,6 +53,14 @@ static DB_functions_t *deadbeef;
 
 #define BORK_TIME 0xC0CAC01A
 
+inline unsigned get_le32( void const* p )
+{
+    return  (unsigned) ((unsigned char const*) p) [3] << 24 |
+            (unsigned) ((unsigned char const*) p) [2] << 16 |
+            (unsigned) ((unsigned char const*) p) [1] <<  8 |
+            (unsigned) ((unsigned char const*) p) [0];
+}
+
 static unsigned long parse_time_crap(const char *input)
 {
     if (!input) return BORK_TIME;
@@ -283,7 +291,7 @@ int psf1_load(void * context, const uint8_t * exe, size_t exe_size,
 
     if ( exe_size < 0x800 ) return -1;
 
-    uint32_t addr = psx->exec.t_addr;
+    uint32_t addr = get_le32( &psx->exec.t_addr );
     uint32_t size = exe_size - 0x800;
 
     addr &= 0x1fffff;
@@ -302,8 +310,8 @@ int psf1_load(void * context, const uint8_t * exe, size_t exe_size,
     if ( state->first )
     {
         void * pR3000 = iop_get_r3000_state( pIOP );
-        r3000_setreg(pR3000, R3000_REG_PC, psx->exec.pc0 );
-        r3000_setreg(pR3000, R3000_REG_GEN+29, psx->exec.s_ptr );
+        r3000_setreg(pR3000, R3000_REG_PC, get_le32( &psx->exec.pc0 ) );
+        r3000_setreg(pR3000, R3000_REG_GEN+29, get_le32( &psx->exec.s_ptr ) );
         state->first = 0;
     }
 
