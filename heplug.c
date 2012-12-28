@@ -188,6 +188,8 @@ struct psf_load_state
     int tag_fade_ms;
     int refresh;
 
+    int utf8;
+
     struct psf_tag *tags;
 };
 
@@ -232,6 +234,10 @@ static int psf_info_dump(void * context, const char * name, const char * value)
     {
         char * end;
         state->refresh = strtoul( value, &end, 10 );
+    }
+    else if ( !strcasecmp( name, "utf8" ) )
+    {
+        state->utf8 = 1;
     }
     else if ( *name != '_' )
     {
@@ -353,18 +359,18 @@ typedef struct {
     int samples_played;
     int samples_to_play;
     int samples_to_fade;
-} midi_info_t;
+} he_info_t;
 
 DB_fileinfo_t *
 he_open (uint32_t hints) {
-    DB_fileinfo_t *_info = (DB_fileinfo_t *)malloc (sizeof (midi_info_t));
-    memset (_info, 0, sizeof (midi_info_t));
+    DB_fileinfo_t *_info = (DB_fileinfo_t *)malloc (sizeof (he_info_t));
+    memset (_info, 0, sizeof (he_info_t));
     return _info;
 }
 
 int
 he_init (DB_fileinfo_t *_info, DB_playItem_t *it) {
-    midi_info_t *info = (midi_info_t *)_info;
+    he_info_t *info = (he_info_t *)_info;
 
     deadbeef->pl_lock ();
     const char * uri = info->path = strdup( deadbeef->pl_find_meta (it, ":URI") );
@@ -494,7 +500,7 @@ he_init (DB_fileinfo_t *_info, DB_playItem_t *it) {
 
 void
 he_free (DB_fileinfo_t *_info) {
-    midi_info_t *info = (midi_info_t *)_info;
+    he_info_t *info = (he_info_t *)_info;
     if (info) {
         if (info->psf2fs) {
             psf2fs_delete( info->psf2fs );
@@ -514,7 +520,7 @@ he_free (DB_fileinfo_t *_info) {
 
 int
 he_read (DB_fileinfo_t *_info, char *bytes, int size) {
-    midi_info_t *info = (midi_info_t *)_info;
+    he_info_t *info = (he_info_t *)_info;
     short * samples = (short *) bytes;
     uint32_t sample_count = size / ( 2 * sizeof(short) );
 
@@ -552,7 +558,7 @@ he_read (DB_fileinfo_t *_info, char *bytes, int size) {
 
 int
 he_seek_sample (DB_fileinfo_t *_info, int sample) {
-    midi_info_t *info = (midi_info_t *)_info;
+    he_info_t *info = (he_info_t *)_info;
     unsigned long int s = sample;
     if (s < info->samples_played) {
         struct psf_load_state state;
@@ -596,6 +602,33 @@ he_seek (DB_fileinfo_t *_info, float time) {
     return he_seek_sample (_info, time * _info->fmt.samplerate);
 }
 
+static const char *
+convstr (const char* str, int sz, char *out, int out_sz) {
+    int i;
+    for (i = 0; i < sz; i++) {
+        if (str[i] != ' ') {
+            break;
+        }
+    }
+    if (i == sz) {
+        out[0] = 0;
+        return out;
+    }
+
+    const char *cs = deadbeef->junk_detect_charset (str);
+    if (!cs) {
+        return str;
+    }
+    else {
+        if (deadbeef->junk_iconv (str, sz, out, out_sz, cs, "utf-8") >= 0) {
+            return out;
+        }
+    }
+
+    trace ("cdumb: failed to detect charset\n");
+    return NULL;
+}
+
 DB_playItem_t *
 he_insert (ddb_playlist_t *plt, DB_playItem_t *after, const char *fname) {
     DB_playItem_t *it = NULL;
@@ -622,6 +655,8 @@ he_insert (ddb_playlist_t *plt, DB_playItem_t *after, const char *fname) {
 
     it = deadbeef->pl_item_alloc_init (fname, he_plugin.plugin.id);
 
+    char junk_buffer[2][1024];
+
     struct psf_tag * tag = state.tags;
     while ( tag ) {
         if ( !strncasecmp( tag->name, "replaygain_", 11 ) ) {
@@ -636,7 +671,14 @@ he_insert (ddb_playlist_t *plt, DB_playItem_t *after, const char *fname) {
                 deadbeef->pl_set_item_replaygain( it, DDB_REPLAYGAIN_TRACKPEAK, fval );
             }
         } else {
-            deadbeef->pl_add_meta (it, tag->name, tag->value);
+            if ( !state.utf8 ) {
+                junk_buffer[0][ 1023 ] = '\0';
+                junk_buffer[1][ 1023 ] = '\0';
+                deadbeef->pl_add_meta (it, convstr( tag->name, strlen( tag->name ), junk_buffer[0], 1023 ),
+                        convstr( tag->value, strlen( tag->value ), junk_buffer[1], 1023 ));
+            } else {
+                deadbeef->pl_add_meta (it, tag->name, tag->value);
+            }
         }
         tag = tag->next;
     }
